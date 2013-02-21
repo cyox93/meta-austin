@@ -41,6 +41,8 @@ IMAGE_INIT_MANAGER = ""
 IMAGE_INITSCRIPTS = ""
 IMAGE_DEV_MANAGER = ""
 
+IMAGE_NAME_PREFIX = "austin-updater"
+
 FEED_DEPLOYDIR_BASE_URI = ""
 ONLINE_PACKAGE_MANAGEMENT = "none"
 
@@ -54,12 +56,13 @@ do_link() {
 	ln -s sh.shared sh
 }
 
-#do_make_sb() {
-# cd ${DEPLOY_DIR_IMAGE}
-# elftosb -z -c imx-bootlets-linux_initramfs.bd-${MACHINE} -o ${MACHINE}.linux_initramfs.sb
-#}
+do_make_sb() {
+	cd ${DEPLOY_DIR_IMAGE}
+	elftosb -z -c imx-bootlets-updater.bd-${MACHINE} -o ${IMAGE_NAME_PREFIX}-${MACHINE}-${DATETIME}.sb
+	ln -sf ${IMAGE_NAME_PREFIX}-${MACHINE}-${DATETIME}.sb ${IMAGE_NAME_PREFIX}.sb
+}
 
 ROOTFS_POSTPROCESS_COMMAND += "remove_packaging_data_files ; "
 
 IMAGE_PREPROCESS_COMMAND += "do_link"
-#MACHINE_POSTPROCESS_COMMAND += "do_make_sb"
+MACHINE_POSTPROCESS_COMMAND += "do_make_sb"
