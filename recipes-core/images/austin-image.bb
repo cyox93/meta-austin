@@ -10,14 +10,18 @@ LICENSE = "Ohsung"
 inherit core-image
 
 # for development 
-IMAGE_INSTALL += " \ 
-	dropbear \ 
-	lrzsz \ 
-	mtd-utils \ 
-	wireless-tools \
-	imx-test \
-	"
-IMAGE_INSTALL += "psplash"
+DEVEL_INSTALL = " \ 
+				dropbear \ 
+				lrzsz \ 
+				mtd-utils \ 
+				wireless-tools \
+				imx-test \
+				"
+
+IMAGE_INSTALL += " \
+				psplash \
+				${DEVEL_INSTALL} \
+				"
 
 IMAGE_DEVICE_TABLES = "files/device_table-austin.txt"
 
