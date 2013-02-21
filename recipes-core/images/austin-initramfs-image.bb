@@ -21,13 +21,21 @@ DEVEL_INSTALL = " \
 			klibc-utils-sync \ 
 			klibc-utils-umount \ 
 			klibc-utils-cat \ 
+			mtdinfo-klibc \
+			ubidetach-klibc \
+			ubinfo-klibc \
+			ubirsvol-klibc \
 			"
 
 IMAGE_INSTALL = " \
 			libklibc \
 			klibc-utils-kinit.shared \
 			klibc-utils-mount \
-			${DEVEL_INSTALL} \
+			ubiattach-klibc \
+			ubiupdatevol-klibc \
+			ubimkvol-klibc \
+			ubirename-klibc \
+			ubirmvol-klibc \
 			"
 
 # Do not pollute the initrd image with rootfs features
@@ -40,6 +48,8 @@ IMAGE_LOGIN_MANAGER = ""
 IMAGE_INIT_MANAGER = ""
 IMAGE_INITSCRIPTS = ""
 IMAGE_DEV_MANAGER = ""
+
+IMAGE_NAME_PREFIX = "austin-updater"
 
 IMAGE_NAME_PREFIX = "austin-updater"
 

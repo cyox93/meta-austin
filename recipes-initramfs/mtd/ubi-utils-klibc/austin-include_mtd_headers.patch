@@ -1,0 +1,46 @@
+diff --git a/include/libmtd.h b/include/libmtd.h
+index a78c8cb..8cd713a 100644
+--- a/include/libmtd.h
++++ b/include/libmtd.h
+@@ -198,6 +198,7 @@ int mtd_erase(libmtd_t desc, const struct mtd_dev_info *mtd, int fd, int eb);
+  */
+ int mtd_regioninfo(int fd, int regidx, struct region_info_user *reginfo);
+ 
++#if 0
+ /**
+  * mtd_is_locked - see if the specified eraseblock is locked.
+  * @mtd: MTD device description object
+@@ -211,6 +212,7 @@ int mtd_regioninfo(int fd, int regidx, struct region_info_user *reginfo);
+  * set to @ENOTSUPP.
+  */
+ int mtd_is_locked(const struct mtd_dev_info *mtd, int fd, int eb);
++#endif
+ 
+ /**
+  * mtd_torture - torture an eraseblock.
+diff --git a/lib/libmtd.c b/lib/libmtd.c
+index c4836df..3c8dcef 100644
+--- a/lib/libmtd.c
++++ b/lib/libmtd.c
+@@ -39,6 +39,8 @@
+ #include "libmtd_int.h"
+ #include "common.h"
+ 
++#include <mtd/mtd-abi.h>
++
+ /**
+  * mkpath - compose full path from 2 given components.
+  * @path: the first component
+diff --git a/ubi-utils/libubi.c b/ubi-utils/libubi.c
+index c898e36..9051c8a 100644
+--- a/ubi-utils/libubi.c
++++ b/ubi-utils/libubi.c
+@@ -36,6 +36,8 @@
+ #include "libubi_int.h"
+ #include "common.h"
+ 
++#include <mtd/ubi-user.h>
++
+ /**
+  * mkpath - compose full path from 2 given components.
+  * @path: the first component

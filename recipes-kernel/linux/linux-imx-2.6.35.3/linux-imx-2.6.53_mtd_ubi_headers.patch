@@ -1,0 +1,105 @@
+diff --git a/include/mtd/mtd-abi.h b/include/mtd/mtd-abi.h
+index 1fc324a..4df7b20 100644
+--- a/include/mtd/mtd-abi.h
++++ b/include/mtd/mtd-abi.h
+@@ -30,6 +30,51 @@ struct mtd_oob_buf64 {
+ 	__u64 usr_ptr;
+ };
+ 
++/**
++ * MTD operation modes
++ *
++ * @MTD_OPS_PLACE_OOB:	OOB data are placed at the given offset (default)
++ * @MTD_OPS_AUTO_OOB:	OOB data are automatically placed at the free areas
++ *			which are defined by the internal ecclayout
++ * @MTD_OPS_RAW:	data are transferred as-is, with no error correction;
++ *			this mode implies %MTD_OPS_PLACE_OOB
++ *
++ * These modes can be passed to ioctl(MEMWRITE) and are also used internally.
++ * See notes on "MTD file modes" for discussion on %MTD_OPS_RAW vs.
++ * %MTD_FILE_MODE_RAW.
++ */
++enum {
++	MTD_OPS_PLACE_OOB = 0,
++	MTD_OPS_AUTO_OOB = 1,
++	MTD_OPS_RAW = 2,
++};
++
++/**
++ * struct mtd_write_req - data structure for requesting a write operation
++ *
++ * @start:	start address
++ * @len:	length of data buffer
++ * @ooblen:	length of OOB buffer
++ * @usr_data:	user-provided data buffer
++ * @usr_oob:	user-provided OOB buffer
++ * @mode:	MTD mode (see "MTD operation modes")
++ * @padding:	reserved, must be set to 0
++ *
++ * This structure supports ioctl(MEMWRITE) operations, allowing data and/or OOB
++ * writes in various modes. To write to OOB-only, set @usr_data == NULL, and to
++ * write data-only, set @usr_oob == NULL. However, setting both @usr_data and
++ * @usr_oob to NULL is not allowed.
++ */
++struct mtd_write_req {
++	__u64 start;
++	__u64 len;
++	__u64 ooblen;
++	__u64 usr_data;
++	__u64 usr_oob;
++	__u8 mode;
++	__u8 padding[7];
++};
++
+ #define MTD_ABSENT		0
+ #define MTD_RAM			1
+ #define MTD_ROM			2
+@@ -111,6 +156,13 @@ struct otp_info {
+ #define MEMERASE64		_IOW('M', 20, struct erase_info_user64)
+ #define MEMWRITEOOB64		_IOWR('M', 21, struct mtd_oob_buf64)
+ #define MEMREADOOB64		_IOWR('M', 22, struct mtd_oob_buf64)
++/* Check if chip is locked (for MTD that supports it) */
++#define MEMISLOCKED		_IOR('M', 23, struct erase_info_user)
++/*
++ * Most generic write interface; can write in-band and/or out-of-band in various
++ * modes (see "struct mtd_write_req")
++ */
++#define MEMWRITE		_IOWR('M', 24, struct mtd_write_req)
+ 
+ /*
+  * Obsolete legacy interface. Keep it in order not to break userspace
+diff --git a/include/mtd/ubi-user.h b/include/mtd/ubi-user.h
+index 466a832..1ee44b7 100644
+--- a/include/mtd/ubi-user.h
++++ b/include/mtd/ubi-user.h
+@@ -187,6 +187,9 @@
+ #define UBI_IOCEBISMAP _IOR(UBI_VOL_IOC_MAGIC, 5, __s32)
+ /* Set an UBI volume property */
+ #define UBI_IOCSETPROP _IOW(UBI_VOL_IOC_MAGIC, 6, struct ubi_set_prop_req)
++/* Set an UBI volume property */
++#define UBI_IOCSETVOLPROP _IOW(UBI_VOL_IOC_MAGIC, 6, \
++			       struct ubi_set_vol_prop_req)
+ 
+ /* Maximum MTD device name length supported by UBI */
+ #define MAX_UBI_MTD_NAME_LEN 127
+--- a/include/mtd/ubi-user.h
++++ b/include/mtd/ubi-user.h
+@@ -395,6 +395,18 @@ struct ubi_map_req {
+ 	__s8  padding[3];
+ } __attribute__ ((packed));
+ 
++/**
++ * struct ubi_set_vol_prop_req - a data structure used to set an UBI volume
++ *                               property.
++ * @property: property to set (%UBI_VOL_PROP_DIRECT_WRITE)
++ * @padding: reserved for future, not used, has to be zeroed
++ * @value: value to set
++ */
++struct ubi_set_vol_prop_req {
++	__u8  property;
++	__u8  padding[7];
++	__u64 value;
++}  __attribute__((packed));
+ 
+ /**
+  * struct ubi_set_prop_req - a data structure used to set an ubi volume
