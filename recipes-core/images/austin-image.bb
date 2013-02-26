@@ -16,10 +16,14 @@ DEVEL_INSTALL = " \
 				mtd-utils \ 
 				wireless-tools \
 				imx-test \
+				dropbear \
+				lrzsz \
+				kobs-ng \
 				"
 
 IMAGE_INSTALL += " \
 				psplash \
+				udev \ 
 				${DEVEL_INSTALL} \
 				"
 
