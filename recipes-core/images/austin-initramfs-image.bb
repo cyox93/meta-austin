@@ -51,8 +51,6 @@ IMAGE_DEV_MANAGER = ""
 
 IMAGE_NAME_PREFIX = "austin-updater"
 
-IMAGE_NAME_PREFIX = "austin-updater"
-
 FEED_DEPLOYDIR_BASE_URI = ""
 ONLINE_PACKAGE_MANAGEMENT = "none"
 
