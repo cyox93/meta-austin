@@ -6,15 +6,18 @@ FILESEXTRAPATHS_prepend := "${THISDIR}/${PN}:"
 SRC_URI += "file://austin-fix-images-paths.patch \
 			"
 
-CMDLINE_CONSOLE="console=ttyAMA0,115200 kgdboc=ttyAMA0,115200"
-CMDLINE_LCD="lcd_panel=lb02001"
+CMDL_CONSOLE = "console=ttyAMA0,115200 kgdboc=ttyAMA0,115200"
+CMDL_LCD = "lcd_panel=lb02001"
+CMDL_IP = "ip=192.168.0.20"
 
-CMDLINE_NFS="ip=192.168.0.20 root=/dev/nfs rw nfsroot=192.168.0.10:/project/tftpboot/rootfs"
+CMDL_INTRAMFS = "rdinit=/bin/sh"
+CMDL_UBIFS = "noinitrd ubi.mtd=1 rootfstype=ubifs root=ubi0 rw ssp1=mmc gpmi"
+CMDL_NFS = "${CMDL_IP} root=/dev/nfs rw nfsroot=192.168.0.10:/project/tftpboot/rootfs"
 
-export CMDLINE1="${CMDLINE_CONSOLE} ${CMDLINE_LCD} ${CMDLINE_NFS}"
-export CMDLINE2="${CMDLINE_CONSOLE} ${CMDLINE_LCD} ${CMDLINE_NFS}"
-export CMDLINE3="${CMDLINE_CONSOLE} ${CMDLINE_LCD} ${CMDLINE_NFS}"
-export CMDLINE4="${CMDLINE_CONSOLE} ${CMDLINE_LCD} ${CMDLINE_NFS}"
+export CMDLINE1="${CMDL_CONSOLE} ${CMDL_LCD} ${CMDL_UBIFS}"
+export CMDLINE2="${CMDL_CONSOLE} ${CMDL_LCD} ${CMDL_NFS}"
+export CMDLINE3="${CMDL_CONSOLE} ${CMDL_LCD} ${CMDL_INTRAMFS}"
+export CMDLINE4="${CMDL_CONSOLE} ${CMDL_LCD} ${CMDL_NFS}"
 
 
 do_configure_append () {

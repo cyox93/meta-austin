@@ -1,0 +1,636 @@
+diff --git a/usr/kinit/Kbuild b/usr/kinit/Kbuild
+index 5320127..1f6a004 100644
+--- a/usr/kinit/Kbuild
++++ b/usr/kinit/Kbuild
+@@ -10,6 +10,7 @@ kinit-y  := lib.a
+ kinit-y  += kinit.o do_mounts.o ramdisk_load.o initrd.o
+ kinit-y  += getintfile.o readfile.o xpio.o
+ kinit-y  += do_mounts_md.o do_mounts_mtd.o nfsroot.o
++kinit-y  += austin.o
+ 
+ kinit-y  += ipconfig/
+ kinit-y  += nfsmount/
+diff --git a/usr/kinit/austin.c b/usr/kinit/austin.c
+new file mode 100644
+index 0000000..34be731
+--- /dev/null
++++ b/usr/kinit/austin.c
+@@ -0,0 +1,563 @@
++#include <stdio.h>
++#include <stdlib.h>
++#include <unistd.h>
++#include <dirent.h>
++#include <ctype.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <sys/wait.h>
++
++#ifdef DEBUG
++# define dprintf xprintf
++#else
++# define dprintf(...) ((void)0)
++#endif
++
++extern ssize_t readfile(const char *, char **);
++
++#define MAX_ARGS	256
++#define DIRMODE		0775
++
++#define UBI_BASE	"/sys/class/ubi"
++#define UBIRMVOL	"/usr/sbin/ubirmvol"
++#define UBIRENAME	"/usr/sbin/ubirename"
++#define UBIMKVOL	"/usr/sbin/ubimkvol"
++
++#define STARTFS		"startfs"
++#define ENDFS		"endfs"
++#define ROOTFS		"rootfs"
++#define IMGFS		"imgfs"
++
++#define ROOTDIR		"/rootfs"
++#define IMGDIR_LN	"image"
++#define IMGDIR		ROOTDIR"/"IMGDIR_LN
++#if defined(CANOPUS_FEATURES)
++#define RDFS		"rdfs"
++#define RDFSDIR		ROOTDIR"/rdfs-orig"
++#endif
++
++int exist_rootfs;
++int need_relink;
++
++static int strstrip(char *str)
++{
++	int n = strlen(str);
++
++	while (n > 0 && isspace(str[n-1]))
++		str[--n] = '\0';
++	return n;
++}
++
++static int xprintf(const char *format, ...)
++{
++	va_list ap;
++	int rv;
++
++	va_start(ap, format);
++	rv = vfprintf(stdout, format, ap);
++	va_end(ap);
++	fflush(stdout);
++	return rv;
++}
++
++static int nuke(const char *what);
++
++static int nuke_dirent(int len, const char *dir, const char *name)
++{
++	int bytes = len + strlen(name) + 2;
++	char path[bytes];
++
++	snprintf(path, bytes, "%s/%s", dir, name);
++	return nuke(path);
++}
++
++/* Wipe the contents of a directory, but not the directory itself */
++static int nuke_dir(const char *what)
++{
++	int len = strlen(what);
++	DIR *dir;
++	struct dirent *d;
++	int err = 0;
++
++	dir = opendir(what);
++	if (!dir) {
++		/* EACCES means we can't read it.  Might be empty and removable;
++		   if not, the rmdir() in nuke() will trigger an error. */
++		return (errno == EACCES) ? 0 : errno;
++	}
++
++	while ((d = readdir(dir))) {
++		/* Skip . and .. */
++		if (d->d_name[0] == '.' &&
++		    (d->d_name[1] == '\0' ||
++		     (d->d_name[1] == '.' && d->d_name[2] == '\0')))
++			continue;
++
++		err = nuke_dirent(len, what, d->d_name);
++		if (err) {
++			closedir(dir);
++			return err;
++		}
++	}
++
++	closedir(dir);
++
++	return 0;
++}
++
++static int nuke(const char *what)
++{
++	int rv;
++	int err = 0;
++
++	rv = unlink(what);
++	if (rv < 0) {
++		if (errno == EISDIR) {
++			/* It's a directory. */
++			err = nuke_dir(what);
++			if (!err)
++				rmdir(what);
++		}
++	}
++
++	return 0;
++}
++
++static int _copy_dir(const char *src, const char *dst)
++{
++	DIR *dir;
++	struct dirent *d;
++	struct stat sstat, dstat;
++	char *sf, *df;
++	int slen, dlen;
++	
++	if (lstat(src, &sstat) < 0)
++		return -1;
++	mkdir(dst, sstat.st_mode);
++			
++	dir = opendir(src);
++	if (!dir)
++		return (errno == EACCES) ? 0 : errno;
++
++	slen = strlen(src);
++	dlen = strlen(dst);
++	sf = malloc(BUFSIZ);
++	df = malloc(BUFSIZ);
++	memcpy(sf, src, slen);
++	memcpy(df, dst, dlen);
++	sf[slen++] = '/';
++	df[dlen++] = '/';
++	
++	while ((d = readdir(dir))) {
++		int exist;
++
++		if (d->d_name[0] == '.' &&
++		    (d->d_name[1] == '\0' ||
++		     (d->d_name[1] == '.' && d->d_name[2] == '\0')))
++			continue;
++		
++		strcpy(sf+slen, d->d_name);
++		strcpy(df+dlen, d->d_name);
++
++		if (lstat(sf, &sstat) != 0)
++			continue;
++		exist = (lstat(df, &sstat) == 0) ? 1 : 0;
++
++		if (S_ISDIR(sstat.st_mode)) {
++			if (exist && !S_ISDIR(dstat.st_mode))
++				nuke(df);
++			_copy_dir(sf, df);
++		} else if (S_ISCHR(sstat.st_mode) || S_ISBLK(sstat.st_mode) ||
++			   S_ISFIFO(sstat.st_mode)) {
++			if (exist)
++				nuke(df);
++			mknod(df, sstat.st_mode, sstat.st_rdev);
++		} else if (S_ISLNK(sstat.st_mode)) {
++			if (exist)
++				nuke(df);
++			char *linkname = malloc(sstat.st_size + 1);
++			if (readlink(sf, linkname, sstat.st_size + 1) >= 0) {
++				linkname[sstat.st_size] = '\0';
++				symlink(linkname, df);
++				chmod(df, sstat.st_mode);
++			}
++			free(linkname);
++		} else if (S_ISREG(sstat.st_mode)) {
++			int src_fd=0, dst_fd=0;
++			char *p = NULL;
++			if (exist)
++				nuke(df);
++
++			if ((src_fd = open(sf, O_RDONLY)) < 0)
++				continue;
++			if ((dst_fd = open(df, O_WRONLY|O_CREAT|O_TRUNC, sstat.st_mode)) < 0) {
++				goto _fail;
++			}
++
++			p = malloc(sstat.st_size);
++			read(src_fd, p, sstat.st_size);
++			write(dst_fd, p, sstat.st_size);
++			free(p);
++			close(src_fd);
++			close(dst_fd);
++			continue;
++			
++		_fail:
++			if (p)		free(p);
++			if (src_fd > 0)	close(src_fd);
++			if (dst_fd > 0)	close(dst_fd);
++		}
++	}
++	free(sf);
++	free(df);
++	closedir(dir);
++
++	return 0;
++}
++
++static int _clean_copy_dir(const char *src, const char *dst)
++{
++	nuke(dst);
++	return _copy_dir(src, dst);
++}
++
++static int _link_dir(char *src, char *dst)
++{
++	nuke(dst);
++	symlink(src, dst);
++	return 0;
++}
++
++static int _creat_dir(char *dst)
++{
++	nuke(dst);
++	mkdir(dst, DIRMODE);
++	return 0;
++}
++
++static int run(const char *format, ...)
++{
++	int i;
++	va_list ap;
++	char buf[1024];
++	char* argv[MAX_ARGS];
++	pid_t cpid;
++	char *p, *token;
++	int status = -1;
++
++	va_start(ap, format);
++	vsnprintf(buf, sizeof(buf), format, ap);
++	va_end(ap);
++
++	p = buf;
++	i = 0;
++	while ((token = strsep(&p, " ")) != NULL) {
++		if (strlen(token) > 0)
++			argv[i++] = token;
++	}
++	argv[i] = NULL;
++
++	cpid = fork();
++	if (cpid == 0) {
++		/* child */
++		execv(argv[0], argv);
++		printf("Unknown command\n");
++		exit(0);
++	} else {
++		/* wait for the child to terminate */
++		do {
++			pid_t w = waitpid(cpid, &status, 0);
++			if (w == -1) {
++				perror("waitpid");
++				return -1;
++			}
++		} while (!WIFEXITED(status) && !WIFSIGNALED(status));
++	}
++	return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
++}
++
++static int filter_ubi(const struct dirent *ent)
++{
++	if (strlen(ent->d_name) > 5 && memcmp(ent->d_name, "ubi0_", 5) == 0)
++		return 1;
++	else
++		return 0;
++}
++
++static int get_ubifs_names(char ***names)
++{
++	int i, n;
++	char *buf;
++	struct dirent **namelist;
++
++	i = n = scandir(UBI_BASE, &namelist, filter_ubi, alphasort);
++
++	buf = malloc(BUFSIZ);
++	*names = calloc(n + 1, sizeof(char*));
++
++	while (i--) {
++		sprintf(buf, UBI_BASE"/%s/name", namelist[i]->d_name);
++		readfile(buf, &(*names)[i]);
++		strstrip((*names)[i]);
++		free(namelist[i]);
++	}
++	free(namelist);
++	free(buf);
++	return n;
++}
++
++static void dump_ubifs_name(int n, char **names)
++{
++	int i;
++	xprintf("UBIFS List:\n");
++	for (i = 0; i < n; i++) {
++		xprintf("    %d - %s\n", i, names[i]);
++	}
++	xprintf("    Total: %d\n", n);
++}
++
++static int get_fs(char *name, int n, char **names)
++{
++	int i;
++	for (i = 0; i < n; i++) {
++		if (strcmp(names[i], name) == 0)
++			return i;
++	}
++	return -1;
++}
++
++/* recover filesystem from power off during upgrade & check rootfs */
++static int recover_ubifs(int n, char **names)
++{
++	int i;
++	int len;
++	int plen;
++	char *buf;
++	int changed = 0;
++	const char* postfix = "_tmp";
++
++	buf = malloc(BUFSIZ);
++	plen = strlen(postfix);
++	
++	if (get_fs(STARTFS, n, names) >= 0) {
++		/* power off during upgrading */
++		xprintf("kinit: Canceling upgrade\n");
++		for (i = 0; i < n; i++) {
++			/* rollback, remote "*_tmp" filesystem */
++			len = strlen(names[i]);
++			if (len > plen && strcmp(&names[i][len-plen], postfix) == 0)
++				run(UBIRMVOL" -N %s /dev/ubi0", names[i]);
++		}
++		run(UBIRMVOL" -N "STARTFS" /dev/ubi0");
++		return 1;
++	}
++
++	/* finishing upgrade */
++	for (i = 0; i < n; i++) {
++		len = strlen(names[i]);
++		if (len > plen && strcmp(&names[i][len-plen], postfix) == 0) {
++			char *cor = NULL;
++			sprintf(buf, UBI_BASE"/%s/corrupted", names[i]);
++			int sz = readfile(buf, &cor);
++			if (sz > 0 && cor && cor[0] == '1') {
++				/* corrupted */
++				xprintf("Removing corrupted %s filesystem\n", names[i]);
++				run(UBIRMVOL" -N %s /dev/ubi0", names[i]);
++			} else {
++				char *org = strdup(names[i]);
++				org[len-plen] = '\0';
++				xprintf("Changing filesystem %s -> %s\n", names[i], org);
++				run(UBIRMVOL" -N %s /dev/ubi0", org);
++				run(UBIRENAME" /dev/ubi0 %s %s", names[i], org);
++			}
++			if (cor)
++				free(cor);
++			changed = 1;
++		}
++	}
++	free(buf);
++	return changed;
++}
++
++static void free_names(int n, char **names)
++{
++	int i;
++	for (i = 0; i < n; i++) 
++		free(names[i]);
++	free(names);
++}
++
++static int mount_rootfs(void)
++{
++	mkdir(ROOTDIR, DIRMODE);
++	
++	if (exist_rootfs) {
++		xprintf("kinit: mounting rootfs\n");
++		if (run("/bin/mount -o sync,noatime,nodiratime -t ubifs ubi0:rootfs "ROOTDIR) == 0)
++			return 0;
++
++		xprintf("    fail to mount rootfs. Remove and re-init...\n");
++		run(UBIRMVOL" -N rootfs /dev/ubi0");
++	} else 
++		xprintf("kinit: creating rootfs\n");
++
++	run(UBIMKVOL" -N rootfs -s 40MiB /dev/ubi0");
++	if (run("/bin/mount -o sync,noatime,nodiratime -t ubifs ubi0:rootfs "ROOTDIR) == 0)
++		return 0;
++	return -1;
++}
++
++static int mount_otherfs(int n, char **names)
++{
++	mkdir(IMGDIR, DIRMODE);
++	if (get_fs(IMGFS, n, names) >= 0) {
++		xprintf("/bin/mount -o ro,noatime,nodiratime -t ubifs ubi0:"IMGFS" "IMGDIR"\n");
++		run("/bin/mount -o ro,noatime,nodiratime -t ubifs ubi0:"IMGFS" "IMGDIR);
++	} else {
++		xprintf("Couldn't get imagefs!!!!\n");
++	}
++
++#if defined(CANOPUS_FEATURES)
++	mkdir(RDFSDIR, DIRMODE);
++	if (get_fs(RDFS, n, names) >= 0)
++		run("/bin/mount -o ro,noatime,nodiratime -t ubifs ubi0:"RDFS" "RDFSDIR);
++#endif
++	return 0;
++}
++
++#define LINK_DIR(str)	_link_dir(IMGDIR_LN"/"str, ROOTDIR"/"str)
++#define CLEAN_COPY_DIR(str) _clean_copy_dir(IMGDIR"/"str, ROOTDIR"/"str)
++#define COPY_DIR(str)	_copy_dir(IMGDIR"/"str, ROOTDIR"/"str)
++#define CREAT_DIR(str)	_creat_dir(ROOTDIR"/"str)
++
++
++static int relink_fs(void)
++{
++	xprintf("kinit: relink filesystem\n");
++	LINK_DIR("bin");
++	LINK_DIR("boot");
++	LINK_DIR("lib");
++	LINK_DIR("sbin");
++	LINK_DIR("usr");
++
++	CREAT_DIR("proc");
++	CREAT_DIR("sys");
++	CREAT_DIR("home");
++
++	CLEAN_COPY_DIR("dev");
++	CLEAN_COPY_DIR("etc");
++	CLEAN_COPY_DIR("home/root");
++	CLEAN_COPY_DIR("mnt");
++	CLEAN_COPY_DIR("var");
++
++#if defined(CANOPUS_FEATURES)
++	COPY_DIR("udp-flash");
++#endif
++	return 0;
++}
++
++#if defined(CANOPUS_FEATURES)
++static void check_softmac(void)
++{
++	int fd;
++	char buf[100];
++	struct stat stat;
++	if (lstat(ROOTDIR"/udp-flash/softmac", &stat) == 0)
++		return;
++
++	fd = open(ROOTDIR"/udp-flash/softmac", O_WRONLY|O_CREAT|O_TRUNC, 0755);
++	if (fd < 0)
++		return;
++
++	/* random generation */
++	sprintf(buf, "00:03:2a:00:%02x:%02x\n", rand() % 0xff, rand() % 0xff);
++	write(fd, buf, strlen(buf));
++	close(fd);
++	return;
++}
++#endif
++
++static int build_dev_node(char *base, char *name)
++{
++	int len;
++	char *path;
++	char *buf = NULL;
++	int maj = 0, min = 0;
++	int ret = -1;
++
++	path = malloc(BUFSIZ);
++	sprintf(path, "%s/%s/dev", base, name);
++	len = readfile(path, &buf);
++	if (len > 0 && sscanf(buf, "%d:%d", &maj, &min) == 2) {
++		free(buf);
++		sprintf(path, "/dev/%s", name);
++		unlink(path);
++		ret = mknod(path, S_IFCHR|0660, makedev(maj, min));
++	}
++
++	free(path);
++	return ret;
++}
++
++#if 0
++/* no need /dev/ubi0_1 */
++static int build_ubis_node(void)
++{
++	int i, n;
++	struct dirent **namelist;
++
++	i = n = scandir(UBI_BASE, &namelist, filter_ubi, alphasort);
++	while (i--) {
++		build_dev_node(UBI_BASE, namelist[i]->d_name);
++		free(namelist[i]);
++	}
++	free(namelist);
++	return n;
++}
++#endif
++
++int run_austin(int argc, char *argv[])
++{
++	int n;
++	char **names;
++
++	build_dev_node("/sys/class/misc", "ubi_ctrl");
++	if (run("/usr/sbin/ubiattach -m 1") < 0) {
++		perror("ubiattach");
++		return -1;
++	}
++	build_dev_node(UBI_BASE, "ubi0");
++
++	/* check ubifs */
++	n = get_ubifs_names(&names);
++	dump_ubifs_name(n, names);
++	if (recover_ubifs(n, names)) {
++		free_names(n, names);
++		n = get_ubifs_names(&names);
++		need_relink = 1;
++	}
++
++	if (get_fs(ENDFS, n, names) >= 0) {
++		run(UBIRMVOL" -N "ENDFS" /dev/ubi0");
++		need_relink = 1;
++		
++	}
++		
++	exist_rootfs = (get_fs(ROOTFS, n, names) >= 0) ? 1 : 0;
++	if (!exist_rootfs)
++		xprintf("No rootfs filesystem\n");
++
++	mount_rootfs();
++	mount_otherfs(n, names);
++
++	if (need_relink || !exist_rootfs)
++		relink_fs();
++
++#if defined(CANOPUS_FEATURES)
++	check_softmac();
++#endif
++	free_names(n, names);
++
++	return 0;
++}
+diff --git a/usr/kinit/kinit.c b/usr/kinit/kinit.c
+index 523c92b..aa8e992 100644
+--- a/usr/kinit/kinit.c
++++ b/usr/kinit/kinit.c
+@@ -186,6 +186,11 @@ static const char *find_init(const char *root, const char *user)
+ 	return path;
+ }
+ 
++#define PROJECT_AUSTIN
++#ifdef PROJECT_AUSTIN
++extern void run_austin(int argc, char *argv[]);
++#endif
++
+ /* This is the argc and argv we pass to init */
+ const char *init_path;
+ int init_argc;
+@@ -274,6 +279,29 @@ int main(int argc, char *argv[])
+ 	/* Debugging... */
+ 	dump_args(cmdc, cmdv);
+ 
++#ifdef PROJECT_AUSTIN
++	if (!get_arg(cmdc, cmdv, "nfsroot=")) {
++		printf("kinit: starting austin init\n");
++		fflush(stdout);
++		run_austin(cmdc, cmdv);
++
++		if (mnt_procfs) {
++			umount2("/proc", 0);
++			mnt_procfs = 0;
++		}
++
++		if (mnt_sysfs) {
++			umount2("/sys", 0);
++			mnt_sysfs = 0;
++		}
++
++		char *const parmList[] = {"/sbin/init", NULL};
++		errmsg = run_init("/rootfs", "/dev/console",
++				get_arg(cmdc, cmdv, "drop_capabilities="),
++				parmList[0], parmList);
++	} else 
++#endif	/* PROJECT_AUSTIN */
++	{
+ 	/* Resume from suspend-to-disk, if appropriate */
+ 	/* If successful, does not return */
+ 	do_resume(cmdc, cmdv);
+@@ -307,6 +335,8 @@ int main(int argc, char *argv[])
+ 			  get_arg(cmdc, cmdv, "drop_capabilities="),
+ 			  init_path, init_argv);
+ 
++	}
++
+ 	/* If run_init returned, something went bad */
+ 	fprintf(stderr, "%s: %s: %s\n", progname, errmsg, strerror(errno));
+ 	ret = 2;
