@@ -1,0 +1,17 @@
+Patch was imported from the Austin project
+Signed-off-by: Hoyeon Kim <smileyeoni@gmail.com>
+Linux headers of Austin project doesn't support CAP_SYSLOG
+Signed-off-by: Hoyeon Kim <smileyeoni@gmail.com>
+
+diff --git a/usr/kinit/capabilities.c b/usr/kinit/capabilities.c
+index eab4d93..3b74664 100644
+--- a/usr/kinit/capabilities.c
++++ b/usr/kinit/capabilities.c
+@@ -61,7 +61,6 @@ struct capability {
+ 	MAKE_CAP(CAP_SETFCAP),
+ 	MAKE_CAP(CAP_MAC_OVERRIDE),
+ 	MAKE_CAP(CAP_MAC_ADMIN),
+-	MAKE_CAP(CAP_SYSLOG),
+ };
+ 
+ static void fail(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
